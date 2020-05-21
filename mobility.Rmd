@@ -1,0 +1,185 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+Global_Mobility_Report <- read_csv("https://www.gstatic.com/covid19/mobility/Global_Mobility_Report.csv",
+                                   col_types = cols(date = col_date(format = "%Y-%m-%d"),
+                                                    sub_region_1 = col_character(), 
+                                                    sub_region_2 = col_character()))
+Global_Mobility_Report <- Global_Mobility_Report %>% 
+  rename(retail_and_recreation = retail_and_recreation_percent_change_from_baseline,
+         grocery_and_pharmacy = grocery_and_pharmacy_percent_change_from_baseline,
+         parks = parks_percent_change_from_baseline,
+         transit_stations = transit_stations_percent_change_from_baseline,
+         workplaces = workplaces_percent_change_from_baseline,
+         residential = residential_percent_change_from_baseline) %>% 
+  pivot_longer(c(retail_and_recreation,
+                 grocery_and_pharmacy,
+                 parks,
+                 transit_stations,
+                 workplaces,
+                 residential),
+               names_to = 'mobility',
+               values_to = 'percent_change_from_baseline')
+
+
+cbp2 <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7",
+          "#999999", "red")
+
+estados <- read_csv("C:/Users/caioe/Downloads/estados.csv")
+  
+
+```
+
+```{r}
+brazil <- Global_Mobility_Report %>% 
+  filter(country_region == 'Brazil',
+         is.na(sub_region_1)) %>% 
+  mutate(percent_brazil = percent_change_from_baseline) %>% 
+  select(date,
+         mobility,
+         percent_brazil)
+  
+brazil_states <- Global_Mobility_Report %>% 
+  filter(country_region == 'Brazil',
+         !is.na(sub_region_1)) %>% 
+  left_join(brazil,
+            by = c("date" = "date",
+                   "mobility" = "mobility")) %>%
+  mutate(percent_change = (percent_brazil - percent_change_from_baseline),
+         diff = ifelse(percent_change >= 0, "pos", "neg"))
+brazil_states$sub_region_1 <- gsub("State of ", "", brazil_states$sub_region_1)
+brazil_states <- brazil_states %>% 
+  left_join(estados, by =c("sub_region_1" = "Estado"))
+```
+
+```{r}
+brazil_states %>% 
+  ggplot(aes(x = date, 
+             y = percent_change_from_baseline, 
+             group = sub_region_1,
+             color = sub_region_1)) +
+  geom_line() +
+  facet_wrap(~mobility) +
+  theme(legend.position = "none")
+```
+
+```{r}
+brazil %>% 
+  mutate(diff = ifelse(percent_brazil <= 0, "pos", "neg")) %>% 
+  filter(mobility == 'workplaces') %>% 
+  ggplot(aes(x = date, 
+             y = percent_brazil*-1,
+             group = mobility,
+             fill = diff)) +
+  geom_col() +
+  geom_smooth(se = FALSE,
+              span = 0.6)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+brazil_states %>% 
+  filter(mobility == 'retail_and_recreation') %>% 
+  ggplot(aes(x = date, 
+             y = percent_change, 
+             group = sub_region_1,
+             color = diff,
+             fill = diff)) +
+  geom_col() +
+  geom_smooth(se = FALSE,
+              span = 0.6) +
+  facet_wrap(Regiao~sub_region_1) +
+  ylim(-20, 20) +
+  theme(legend.position = "none")
+```
+
+```{r}
+brazil_states %>% 
+  filter(mobility == 'workplaces') %>% 
+  ggplot(aes(x = date, 
+             y = percent_change_from_baseline, 
+             group = sub_region_1,
+             color = sub_region_1)) +
+  geom_smooth(se = FALSE,
+              span = 0.6) +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+brazil_states %>%
+  filter(sub_region_1 %in% c("São Paulo", "Amazonas", "Amapá", "Ceará", "Tocantins", 
+                             "Rio de Janeiro", "Santa Catarina","Rio Grande do Sul",
+                             "Bahia", "Pernambuco")) %>% 
+  ggplot(aes(x = date, 
+             y = percent_change_from_baseline, 
+             group = sub_region_1,
+             color = sub_region_1)) +
+  geom_line() +
+  facet_wrap(~mobility) +
+  scale_colour_manual(values = cbp2)
+
+```
+
+
+```{r}
+world_mobility <- Global_Mobility_Report %>%
+  filter(country_region %in% c("Brazil", "United States", "Spain", "Italy", "France", "United Kingdom", "Mexico", "Ecuador","Canada","Singapore"),
+         is.na(sub_region_1))
+
+world_mobility %>% 
+  ggplot(aes(x = date, 
+             y = percent_change_from_baseline, 
+             group = country_region,
+             color = country_region)) +
+  geom_line(alpha = 0) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~mobility) +
+  scale_colour_manual(values = cbp2)
+```
+
+```{r}
+america_mobility <- Global_Mobility_Report %>%
+  filter(country_region %in% c("Brazil", "United States", "Argentina", "Chile", "Uruguay", "Paraguay",
+                    "Peru", "Mexico", "Ecuador", "Canada"),
+         is.na(sub_region_1))
+
+america_mobility %>% 
+  ggplot(aes(x = date, 
+             y = percent_change_from_baseline, 
+             group = country_region,
+             color = country_region)) +
+  geom_line(alpha = 0) +
+  geom_smooth(se = FALSE,
+              size = 1.2) +
+  facet_wrap(~mobility) +
+  scale_colour_manual(values = cbp2)
+
+```
+
+```{r}
+usa_mobility <- Global_Mobility_Report %>%
+  filter(country_region == "United States",
+         !is.na(sub_region_1),
+         is.na(sub_region_2))
+
+usa_mobility %>% 
+  ggplot(aes(x = date, 
+             y = percent_change_from_baseline, 
+             group = sub_region_1,
+             color = sub_region_1)) +
+  geom_line() +
+  facet_wrap(~mobility) +
+  theme(legend.position = "none")
+
+```
+

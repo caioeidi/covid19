@@ -1,0 +1,840 @@
+---
+title: "Covid-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE ,message = FALSE, warning = FALSE)
+```
+#
+### Data pre-processing
+###
+##### Data import
+```{r echo=TRUE}
+library(dplyr)
+library(tidyr)
+library(forcats)
+library(ggplot2)
+library(readr)
+library(directlabels)
+library(knitr)
+library(zoo)
+
+full_data_corona <- read_csv("https://covid.ourworldindata.org/data/owid-covid-data.csv")
+
+who_region_original <- read_csv("C:/Users/caioe/Downloads/who-regions.csv")
+
+who_region <- who_region_original %>% 
+  select(Entity, Code,'WHO region') %>% 
+  rename(who_region = "WHO region") %>% 
+  group_by(Entity, Code,who_region)
+
+full_data_corona <- full_data_corona %>% 
+  left_join(who_region, by = c("location" = "Entity")) %>% 
+  mutate(rate = total_deaths/total_cases)
+```
+
+```{r}
+#library(extrafont)
+
+#download.file("http://simonsoftware.se/other/xkcd.ttf",
+#              dest="xkcd.ttf", mode="wb")
+#system("mkdir ~/.fonts")
+#system("cp xkcd.ttf  ~/.fonts")
+#font_import(paths = "~/.fonts", pattern="[X/x]kcd")
+#fonts()
+#loadfonts()
+```
+
+
+```{r}
+cases <- full_data_corona %>% 
+  filter(total_cases >= 100) %>% 
+  group_by(location) %>% 
+  arrange(date,location) %>% 
+  mutate(day = row_number())
+
+deaths <- full_data_corona %>% 
+  filter(total_deaths >= 5) %>% 
+  group_by(location) %>% 
+  arrange(date,location) %>% 
+  mutate(day = row_number())
+
+tests <- full_data_corona %>% 
+  filter(total_tests > 0) %>% 
+  group_by(location) %>% 
+  arrange(date,location) %>% 
+  mutate(day = row_number())
+
+day_compare <- cases %>% 
+  filter(day == max(day))
+  
+max_cases <- full_data_corona %>% 
+  filter(total_cases > 100, location != "World") %>% 
+  group_by(location) %>% 
+  arrange(date,location) %>% 
+  mutate(max_cases_day = row_number()) %>%
+  filter(new_cases == max(new_cases)) %>% 
+  rename(max_date = date,
+         max_new_cases = new_cases,
+         max_new_deaths = new_deaths,
+         max_total_cases = total_cases,
+         max_total_deaths = total_deaths) %>% 
+  select(max_date,
+         location,
+         max_new_cases,
+         max_new_deaths,
+         max_total_cases,
+         max_total_deaths,
+         max_cases_day)
+```
+
+```{r}
+cases %>% 
+  filter(date == max(date)) %>% 
+  select(location,
+         who_region,
+         day,
+         new_cases,
+         total_cases,
+         new_deaths,
+         total_deaths,
+         rate,
+         total_cases_per_million,
+         total_deaths_per_million) %>% 
+  arrange(-total_deaths) %>%
+  mutate(rate = round(rate*100,1),
+         total_cases_per_million = round(total_cases_per_million, 1),
+         total_deaths_per_million = round(total_deaths_per_million, 1)) %>% 
+  head(50) %>% 
+  kable(format = "markdown")
+
+```
+
+#### Days compare
+
+```{r echo=TRUE, fig.width=7, fig.height=7}
+day_compare %>% 
+  filter(!location %in% c("China", "World"),
+         total_cases >= 10000) %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = fct_reorder(location,day), 
+                       size = total_deaths_per_million, 
+                       colour = who_region)) +
+  geom_point(stat = "identity") +
+  theme(axis.text.y = element_text(size=10), 
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  facet_grid(rows = vars(who_region),
+             scales = "free",
+             space = "free")
+```
+
+#### Difference between actual and max case day
+
+```{r echo=TRUE, fig.width=7, fig.height=7}
+day_compare %>% 
+  filter(!location %in% c("China","World"),
+         total_cases >= 10000) %>%
+  left_join(max_cases, by = c("location" = "location")) %>% 
+  pivot_longer(c(day,max_cases_day),
+               names_to = "type",
+               values_to = "day") %>% 
+  ggplot(mapping = aes(x = day,
+                       y = fct_reorder(location,day), 
+                       colour = who_region)) +
+  geom_point(aes(shape = type), 
+             size = 2.5) + 
+  geom_line(alpha = 0.5, 
+            linetype = "dashed", 
+            size = 1) +
+  scale_x_continuous(breaks = seq(0, 100, by = 15)) +
+  theme(axis.text.y = element_text(size=10),
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  facet_grid(rows = vars(who_region),
+             scales = "free",
+             space = "free")
+```
+
+#
+##### World Data
+```{r echo=TRUE}
+
+world_filter <- c("Brazil", "United States", "Spain", "Italy", "France", "United Kingdom", 
+                  "South Korea", "Mexico", "Iran", "Japan", "Germany", "South Africa", 
+                  "Russia", "Ecuador","Canada", "China", "Singapore")
+
+world_cases <- cases %>% 
+  filter(location %in% world_filter)
+
+world_deaths <- deaths %>% 
+  filter(location %in% world_filter)
+
+world_tests <- tests %>% 
+  filter(location %in% world_filter)
+```
+
+#### Cohort New Cases (since 100th case)
+
+```{r echo=TRUE}
+world_cases %>%  
+  ggplot(mapping = aes(x = day, 
+                       y = new_cases, 
+                       group = location,
+                       colour = who_region)) +
+  scale_y_log10() + 
+  stat_smooth(se=FALSE, span = 0.3) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort Total Cases (since 100th case)
+
+```{r echo=TRUE}
+
+growth_cases <- cases %>% 
+  select(day, location) %>% 
+  filter(day > 0,
+         location == "World") %>% 
+  group_by(day) %>% 
+  mutate(doubling_every_day = as.numeric(round(100*2^(day),0)),
+         doubling_every_2_days = as.numeric(round(100*2^(day/2),0)),
+         doubling_every_4_days = as.numeric(round(100*2^(day/4),0)),
+         doubling_every_7_days = as.numeric(round(100*2^(day/7),0)),
+         doubling_every_14_days= as.numeric(round(100*2^(day/14),0))) %>% 
+  pivot_longer(c(doubling_every_day : doubling_every_14_days),
+               names_to = "doubling",
+               values_to = "cases") %>% 
+  select(day,doubling,cases) %>% 
+  filter(cases <= max(world_cases['total_cases']))
+
+
+world_cases %>% 
+  ggplot() +
+  scale_y_log10() + 
+  geom_line(world_cases,
+            mapping = aes(x = day, 
+                       y = total_cases, 
+                       group = location,
+                       colour = who_region), 
+            alpha = 0.6, 
+            size = 1.2) +
+  geom_dl(world_cases,
+          mapping = aes(x = day, 
+                       y = total_cases,
+                       label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  geom_line(growth_cases,
+            mapping = aes(x = day,
+                          y = cases,
+                          group = doubling),
+            color = 'gray',
+            linetype = 'dashed',
+            size = 1) +
+  geom_dl(growth_cases,
+          mapping = aes(x = day,
+                        y = cases,
+                        label = doubling), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.7), 
+          color = "Gray") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  labs(x = "Number of days since 100th case",
+       y = "Cumulative number of cases")
+
+```
+
+```{r}
+world_cases %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_cases_per_million, 
+                       group = location,
+                       colour = who_region)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+
+#### Cohort new deaths (since 5th death)
+
+```{r echo=TRUE}
+world_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = new_deaths, 
+                       group = location,
+                       colour = who_region)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.2) +
+  geom_smooth(se = FALSE, span = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort total deaths (since 5th death)
+
+```{r echo=TRUE}
+growth_deaths <- deaths %>% 
+  select(day, location) %>% 
+  filter(day > 0,
+         location == "World") %>% 
+  group_by(day) %>% 
+  mutate(doubling_every_day = as.numeric(round(5*2^(day),0)),
+         doubling_every_2_days = as.numeric(round(5*2^(day/2),0)),
+         doubling_every_4_days = as.numeric(round(5*2^(day/4),0)),
+         doubling_every_7_days = as.numeric(round(5*2^(day/7),0)),
+         doubling_every_14_days = as.numeric(round(5*2^(day/14),0))) %>% 
+  pivot_longer(c(doubling_every_day : doubling_every_14_days),
+               names_to = "doubling",
+               values_to = "deaths") %>% 
+  select(day, doubling, deaths) %>% 
+  filter(deaths <= max(world_deaths['total_deaths']))
+
+
+world_deaths %>% 
+  ggplot() +
+  scale_y_log10() + 
+  geom_line(world_deaths,
+            mapping = aes(x = day, 
+                       y = total_deaths, 
+                       group = location,
+                       colour = who_region), 
+            alpha = 0.6, 
+            size = 1.2) +
+  geom_dl(world_deaths,
+          mapping = aes(x = day, 
+                       y = total_deaths,
+                       label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  geom_line(growth_deaths,
+            mapping = aes(x = day,
+                          y = deaths,
+                          group = doubling),
+            color = 'gray',
+            linetype = 'dashed',
+            size = 1,
+            alpha = 0.7) +
+  geom_dl(growth_deaths,
+          mapping = aes(x = day,
+                        y = deaths,
+                        label = doubling), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.7), 
+          color = "Gray") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  labs(x = "Number of days since 5th death",
+       y = "Cumulative number of deaths")
+```
+
+```{r}
+world_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_deaths_per_million, 
+                       group = location,
+                       colour = who_region)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, size = 1.2) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort Rate
+
+```{r echo=TRUE}
+world_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = rate, 
+                       group = location,
+                       colour = who_region)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, size = 1.2) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort Tests
+
+```{r}
+world_tests %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_tests, 
+                       group = location,
+                       colour = tests_units)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "bottom",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+```{r}
+world_tests %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_tests_per_thousand, 
+                       group = location,
+                       colour = tests_units)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "bottom",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+
+#
+## America Continent
+#
+```{r echo=TRUE}
+
+america_filter <- c("Brazil", "United States", "Argentina", "Chile", "Uruguay", "Paraguay",
+                    "Peru", "Mexico", "Ecuador", "Canada", "Colombia", "Bolivia")
+
+america_cases <- cases %>% 
+  filter(location %in% america_filter)
+
+america_deaths <- deaths %>% 
+  filter(location %in% america_filter)
+
+america_tests <- tests %>% 
+  filter(location %in% america_filter)
+```
+
+#### Difference between actual and max case day
+
+```{r echo=TRUE, fig.width=7, fig.height=7}
+day_compare %>% 
+  filter(who_region == "Americas") %>%
+  left_join(max_cases, by = c("location" = "location")) %>% 
+  pivot_longer(c(day,max_cases_day),names_to = "type", values_to = "day") %>% 
+  ggplot(mapping = aes(x = day, y = fct_reorder(location,day), colour = who_region)) +
+  geom_point(aes(shape = type),
+             size = 3) + 
+  geom_line(alpha = 0.5, 
+            linetype = "dashed",
+            size = 1)+
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  theme(axis.text.y = element_text(size = 10),
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank())
+```
+
+#### Cohort new cases (since 100th case)
+
+```{r echo=TRUE}
+america_cases %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = new_cases, 
+                       colour = location)) +
+  scale_y_log10() + 
+  stat_smooth(se=FALSE, span = 1) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort total cases (since 100th case)
+
+```{r echo=TRUE}
+america_cases %>% 
+  ggplot() +
+  scale_y_log10() + 
+  geom_line(america_cases,
+            mapping = aes(x = day, 
+                       y = total_cases, 
+                       group = location,
+                       colour = location), 
+            alpha = 0.6, 
+            size = 1.2) +
+  geom_dl(america_cases,
+          mapping = aes(x = day, 
+                       y = total_cases,
+                       label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  geom_line(growth_cases,
+            mapping = aes(x = day,
+                          y = cases,
+                          group = doubling),
+            color = 'gray',
+            linetype = 'dashed',
+            size = 1) +
+  geom_dl(growth_cases,
+          mapping = aes(x = day,
+                        y = cases,
+                        label = doubling), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.7), 
+          color = "Gray") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  labs(x = "Number of days since 100th case",
+       y = "Cumulative number of cases") +
+  xlim(0, max(america_cases$day))
+```
+
+```{r}
+america_cases %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_cases_per_million, 
+                       colour = location)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.8, size = 1.2) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort new deaths (since 5th death)
+
+```{r echo=TRUE}
+america_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = new_deaths, 
+                       colour = location)) +
+  scale_y_log10() +
+  geom_smooth(se=FALSE, span = 1) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort total deaths (since 5th death)
+
+```{r echo=TRUE}
+america_deaths %>% 
+  ggplot() +
+  scale_y_log10() + 
+  geom_line(america_deaths,
+            mapping = aes(x = day, 
+                       y = total_deaths, 
+                       group = location,
+                       colour = location), 
+            alpha = 0.6, 
+            size = 1.2) +
+  geom_dl(america_deaths,
+          mapping = aes(x = day, 
+                       y = total_deaths,
+                       label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  geom_line(growth_deaths,
+            mapping = aes(x = day,
+                          y = deaths,
+                          group = doubling),
+            color = 'gray',
+            linetype = 'dashed',
+            size = 1,
+            alpha = 0.7) +
+  geom_dl(growth_deaths,
+          mapping = aes(x = day,
+                        y = deaths,
+                        label = doubling), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.7), 
+          color = "Gray") +
+  
+  theme(legend.position = "none",
+        axis.line = element_line(size=1, 
+                                 colour = "black"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7)) +
+  labs(x = "Number of days since 5th death",
+       y = "Cumulative number of deaths") +
+  xlim(0, max(america_deaths$day))
+```
+
+```{r}
+america_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_deaths_per_million, 
+                       colour = location)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.8, size = 1) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.8), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+```{r}
+
+```
+
+
+```{r}
+america_tests %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_tests_per_thousand, 
+                       group = location,
+                       colour = tests_units)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.8, size = 1) +
+  geom_point(alpha =0.8) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.8), 
+          color = "Black") +
+  theme(legend.position = "bottom",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+## Nordic Countries
+
+```{r}
+
+nordic_filter <- c("Sweden", "Norway", "Denmark", "Finland")
+
+nordic_cases <- cases %>% 
+  filter(location %in% nordic_filter)
+
+nordic_deaths <- deaths %>% 
+  filter(location %in% nordic_filter)
+
+nordic_tests <- tests %>% 
+  filter(location %in% nordic_filter)
+```
+
+```{r echo=TRUE}
+day_compare %>% 
+  filter(location %in% nordic_filter) %>%
+  left_join(max_cases, by = c("location" = "location")) %>% 
+  pivot_longer(c(day,max_cases_day),
+               names_to = "type", 
+               values_to = "day") %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = fct_reorder(location,day), 
+                       colour = location)) +
+  geom_point(aes(shape = type),
+             size = 3) + 
+  geom_line(alpha = 0.5, 
+            linetype = "dashed",
+            size = 1)+
+  scale_x_continuous(breaks = seq(0, 100, by = 15)) +
+  theme(axis.text.y = element_text(size = 15),
+        axis.title.y = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+```{r echo=TRUE}
+nordic_cases %>%  
+  ggplot(mapping = aes(x = day, 
+                       y = new_cases, 
+                       group = location,
+                       colour = location)) +
+  scale_y_log10() + 
+  stat_smooth(se=FALSE, span = 0.3) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+```{r echo=TRUE}
+nordic_cases %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_cases, 
+                       group = location,
+                       colour = location)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+
+```
+
+```{r}
+nordic_cases %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_cases_per_million, 
+                       group = location,
+                       colour = location)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+
+#### Cohort new deaths (since 5th death)
+
+```{r echo=TRUE}
+nordic_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = new_deaths, 
+                       group = location,
+                       colour = location)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.2) +
+  stat_smooth(se=FALSE, 
+              span = 0.5) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+#### Cohort total deaths (since 5th death)
+
+```{r echo=TRUE}
+nordic_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_deaths, 
+                       group = location,
+                       colour = location)) +
+  #scale_y_log10() + 
+  geom_line(alpha = 0.6, size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+```{r}
+nordic_deaths %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_deaths_per_million, 
+                       group = location,
+                       colour = location)) +
+  #scale_y_log10() + 
+  geom_line(alpha = 0.6, size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+
+```{r}
+nordic_tests %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_tests, 
+                       group = location,
+                       colour = tests_units)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
+
+```{r}
+nordic_tests %>% 
+  ggplot(mapping = aes(x = day, 
+                       y = total_tests_per_thousand, 
+                       group = location,
+                       colour = tests_units)) +
+  scale_y_log10() + 
+  geom_line(alpha = 0.6, 
+            size = 1.2) +
+  geom_point(alpha = 0.6) +
+  geom_dl(aes(label = location), 
+          method = list(dl.combine("last.points"), 
+                        cex = 0.9), 
+          color = "Black") +
+  scale_x_continuous(breaks = seq(0, 100, by = 7))
+```
